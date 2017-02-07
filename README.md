@@ -11,7 +11,7 @@ SimpleITK 0.9.0
 Theano 0.8.2
 
 ## Method
-This method learns transformations of image patches to be used for patch-based label fusion (*Coupe et al. Patch-based Segmentation using Expert Priors: Application to Hippocampus and Ventricle Segmentation. NeuroImage, 54(2): 940–954, 2011*).
+This method learns transformations of image patches to be used for multi-atlas patch-based label fusion (*Coupe et al. Patch-based Segmentation using Expert Priors: Application to Hippocampus and Ventricle Segmentation. NeuroImage, 54(2): 940–954, 2011*).
 
 It uses a deep neural network to compute non-linear embeddings.
 
@@ -67,8 +67,10 @@ The method validates periodically the performance by checking the accuracy on ba
 
 The script `pblf_py.py` does provide an implementation of patch-based label fusion that allows to use a trained neural network to compute patch embeddings.
 
-More details on how to perform such evaluation can be found in the `main_train.py` script.
+More details on how to perform such evaluation can be found in the comments of `main_train.py` script.
 
 Various measures showing the progress of training will be periodically plotted into a file (once each `--display_frequency` iterations), including training/validation cost, accuracy and segmentation dices (this latter one in case it is implemented by the user as explained in the code).
 
-## Patch-based label fusion script `pblf_py.py`
+## Structure of directories
+
+## Multi-atlas patch-based label fusion script `pblf_py.py`
