@@ -8,6 +8,10 @@ from copy import copy
 float_type = np.float16
 int_type = np.uint8
 
+#
+# Class image reader
+#
+
 class ImageReader(object):
 
     def __init__(self, train_dir, val_dir, img_suffix, lab_suffix, labels_superlist, patch_rad, search_rad):
@@ -115,8 +119,6 @@ class PatchSampler(object):
             DistList = self.TrainDistList if mode == 'train' else self.ValDistList
 
             # Sampling border locations
-            # for i, img in enumerate(self.TrainImagesList):
-            #     Iaux = np.ravel_multi_index(np.array([[img.shape[0]//2], [img.shape[1]//2], [img.shape[2]//2]], dtype=np.int)*np.ones((3, 1000), dtype=np.int), img.shape)
             for i, distmap in enumerate(DistList):
                 Iaux = np.where(distmap.ravel() == 1.)[0]
                 if mode == 'train':
@@ -128,8 +130,6 @@ class PatchSampler(object):
                 del Iaux
 
             # Sampling inside locations
-            # for i, img in enumerate(self.TrainImagesList):
-            #     Iaux = np.ravel_multi_index(np.array([[img.shape[0]//2], [img.shape[1]//2], [img.shape[2]//2]], dtype=np.int)*np.ones((3, 1000), dtype=np.int), img.shape)
             for i, distmap in enumerate(DistList):
                 Iaux = np.where(np.logical_and(distmap.ravel() > 1., distmap.ravel() <= float(self.dist_max)))[0]
                 if mode == 'train':
@@ -150,15 +150,8 @@ class PatchSampler(object):
                 self.epoch = 0.
 
 
-    # def get_total_number_of_updates(self, num_samples, fract_inside):  # in order to regularize according to Bengio's practical recommendations for training deep nets
-    #     return np.float(num_samples - np.rint(num_samples * fract_inside)) / np.float(self.n_total)
-
-    # def reset_epochs_rw(self):
-    #     self.epoch = 0.
-    #     self.remaining_samples = np.arange(self.n_total)
-
     #
-    # Sample a mini-batch for supervised training of random walker segmentation
+    # Sample a mini-batch
     #
 
     def sample(self, num_samples, num_neighbors0, fract_inside, xvalset='train', update_epoch=True):
@@ -241,8 +234,6 @@ class PatchSampler(object):
 
             for i, (Image, Label) in enumerate(zip(ImagesList, LabelsList)):
 
-                # MSImage_list = [image_list[i] for image_list in MSImagesSuperlist]
-
                 Iimg = np.where(Idx[Isamp] == i)[0]
 
                 for loc in Loc[Isamp[Iimg]]:
@@ -289,40 +280,33 @@ class PatchSampler(object):
 
         for isamp in range(num_samples):
 
-            # if isamp < n_border:
+            I1 = np.where(AtlasVotes[isamp] == TargetVotes[isamp])[0]
+            I0 = np.array(list(set(range(search_len)) - set(I1)))
 
-                I1 = np.where(AtlasVotes[isamp] == TargetVotes[isamp])[0]
-                I0 = np.array(list(set(range(search_len)) - set(I1)))
+            if I1.size == 0:
+                print('this should not happen')
 
-                if I1.size == 0:
-                    print('this should not happen')
+            if I0.size > num_neighbors // 2 and I1.size > num_neighbors // 2:
+                r = num_neighbors % 2
+                n0 = num_neighbors // 2 + r * int(self.rng.rand() > 0.5)
+                n1 = num_neighbors - n0
+            elif I0.size >= I1.size:
+                n1 = I1.size
+                n0 = num_neighbors - n1
+            else:
+                n0 = I0.size
+                n1 = num_neighbors - n0
 
-                if I0.size > num_neighbors // 2 and I1.size > num_neighbors // 2:
-                    r = num_neighbors % 2
-                    n0 = num_neighbors // 2 + r * int(self.rng.rand() > 0.5)
-                    n1 = num_neighbors - n0
-                elif I0.size >= I1.size:
-                    n1 = I1.size
-                    n0 = num_neighbors - n1
-                else:
-                    n0 = I0.size
-                    n1 = num_neighbors - n0
+            Ineigh0 = self.rng.choice(range(I0.size), size=n0, replace=False) if I0.size > 0 else []
+            Pat0, Vot0 = (AtlasPatches[isamp, I0[Ineigh0]], AtlasVotes[isamp, I0[Ineigh0]]) if I0.size > 0 else (
+                np.zeros((0, patch_len)), np.zeros((0,)))
 
-                Ineigh0 = self.rng.choice(range(I0.size), size=n0, replace=False) if I0.size > 0 else []
-                Pat0, Vot0 = (AtlasPatches[isamp, I0[Ineigh0]], AtlasVotes[isamp, I0[Ineigh0]]) if I0.size > 0 else (
-                    np.zeros((0, patch_len)), np.zeros((0,)))
+            Ineigh1 = self.rng.choice(range(I1.size), size=n1, replace=False) if I1.size > 0 else []
+            Pat1, Vot1 = (AtlasPatches[isamp, I1[Ineigh1]], AtlasVotes[isamp, I1[Ineigh1]]) if I1.size > 0 else (
+                np.zeros((0, patch_len)), np.zeros((0,)))
 
-                Ineigh1 = self.rng.choice(range(I1.size), size=n1, replace=False) if I1.size > 0 else []
-                Pat1, Vot1 = (AtlasPatches[isamp, I1[Ineigh1]], AtlasVotes[isamp, I1[Ineigh1]]) if I1.size > 0 else (
-                    np.zeros((0, patch_len)), np.zeros((0,)))
+            AtlasPatches2[isamp] = np.concatenate((Pat0, Pat1), axis=0)
+            AtlasVotes2[isamp] = np.concatenate((Vot0, Vot1), axis=0)
 
-                AtlasPatches2[isamp] = np.concatenate((Pat0, Pat1), axis=0)
-                AtlasVotes2[isamp] = np.concatenate((Vot0, Vot1), axis=0)
-
-            # else:
-            #     Ineigh = self.rng.choice(range(search_len), size=num_neighbors, replace=False)
-            #     AtlasPatches2[isamp] = AtlasPatches[isamp, Ineigh]
-            #     AtlasVotes2[isamp] = AtlasVotes[isamp, Ineigh]
-
-        return (TargetPatches, TargetVotes, AtlasPatches2, AtlasVotes2)#, TargetMSPatches)
+        return (TargetPatches, TargetVotes, AtlasPatches2, AtlasVotes2)
 

@@ -12,14 +12,15 @@ def relu(x): return T.switch(x > 0, x, 0.)
 
 theano.config.floatX = 'float32'
 
+#
+# Output layer
+#
+
 class MetricLearningLayer(object):
 
     def __init__(self, numpy_rng, input, n_in, n_out, W_values=None):
 
         if W_values is None:
-            # W_values = numpy.asarray(numpy_rng.uniform(low=-numpy.sqrt(6. / (n_in + n_out)),
-            #                                            high=numpy.sqrt(6. / (n_in + n_out)),
-            #                                            size=(n_in, n_out)), dtype=theano.config.floatX)
             W_values = numpy.asarray(numpy_rng.randn(n_in, n_out) / numpy.sqrt(n_in), dtype=theano.config.floatX)
 
         self.W = theano.shared(value=W_values, name='W', borrow=True)
@@ -41,40 +42,32 @@ class MetricLearningLayer(object):
         # keep track of model input
         self.input = input
 
-    def get_l2n(self): return self.l2n
+    def get_l2n(self): return self.l2n  # get ssd
 
-    def get_w(self): return T.nnet.softmax(-self.l2n)
+    def get_w(self): return T.nnet.softmax(-self.l2n)  # get label fusion weights
 
-    # def neg_mean_cross_entropy(self, y):  # numerically stable version
-    #
-    #     log_smax = -self.l2n - T.log(T.sum(T.exp(-self.l2n), axis=1, keepdims=True))
-    #
-    #     true_dist = y / T.sum(y, axis=1, keepdims=True)
-    #
-    #     xentropy = T.sum(true_dist * log_smax, axis=1)
-    #
-    #     return -T.mean(xentropy)
-
-
-    def lf_cost(self, y):
+    def lf_cost(self, y):  # label fusion cost
 
         aux = T.exp(-self.l2n)
         lf = T.sum(y * aux, axis=1) / T.sum(aux, axis=1)
         return -T.mean(T.log(lf))
 
-    def kl_div(self, rho):
+    def kl_div(self, rho):  # kl divergence for sparsity regularization
 
         rho_aux = T.addbroadcast(rho, 1)
         aux = T.exp(-self.l2n)
         h = T.mean(aux, axis=0)
         return -T.sum(rho_aux * T.log(h) + (1. - rho_aux) * T.log(1. - h))
 
-    def get_acc(self, y):
+    def get_acc(self, y):  # get accuracy
 
         aux = T.exp(-self.l2n)
         lf = T.sum(y * aux, axis=1) / T.sum(aux, axis=1)
         return T.mean(lf > 0.5)
 
+#
+# Hidden layer
+#
 
 class HiddenLayer(object):
 
@@ -86,9 +79,6 @@ class HiddenLayer(object):
         # input[0] is target; input[1] is atlas
 
         if W_values is None:
-            # W_values = numpy.asarray(numpy_rng.uniform(low=-numpy.sqrt(6. / (n_in + n_out)),
-            #                                            high=numpy.sqrt(6. / (n_in + n_out)),
-            #                                            size=(n_in, n_out)), dtype=theano.config.floatX)
             W_values = numpy.asarray(numpy_rng.randn(n_in, n_out) / numpy.sqrt(n_in), dtype=theano.config.floatX)
 
             if activation == T.nnet.sigmoid: W_values *= 4.
@@ -142,31 +132,27 @@ class HiddenLayer(object):
         else:
             self.output = (lin_t, lin_D)
 
-        # self.output = (T.switch(lin_t > 0, lin_t, 0.), T.switch(lin_D > 0, lin_D, 0.))
 
-
-    def get_act_stats(self):
+    def get_act_stats(self):  # get activation statistics
 
         act_data = T.concatenate([self.output[0], self.output[1]], axis=1)
 
         return (act_data.mean(), act_data.std())
 
 
-    def get_bn_stats(self):
+    def get_bn_stats(self):  # get batch normalization statistics
 
         return (self.bn_mu_switch, self.bn_std_switch)
 
 
 #
-# Deep network for metric learning (single scale)
+# Deep network for metric learning
 #
 
 class DeepML(object):
 
     def __init__(self, numpy_rng, n_in, n_out, n_hidden_units_list, bn_flag, activation_str,
                  labels_list=None, patch_rad=None, patch_norm=None, ds_fact_list=None):
-
-        # T.config.assert_no_cpu_op = 'warn'
 
         self.epoch = 0.0
 
@@ -234,7 +220,7 @@ class DeepML(object):
             next_n_out = n_hidden_units_list[i + 1] if i < len(n_hidden_units_list) - 1 else n_out
 
         #
-        # Metric learning layer
+        # Metric learning (output) layer
 
         # numpy_rng, input, n_in, n_out, W_values=None
         self.metric_layer = MetricLearningLayer(numpy_rng=numpy_rng,
@@ -270,10 +256,6 @@ class DeepML(object):
             else:
                 self.fn_bn_stats_list.append(None)
 
-        # self.fn_cost_xent = theano.function(inputs=[self.t, self.D, self.y],
-        #                                     outputs=self.metric_layer.neg_mean_cross_entropy(self.y),
-        #                                     givens=self.givens, on_unused_input='ignore')
-
         self.fn_cost = theano.function(inputs=[self.t, self.D, self.y],
                                        outputs=self.metric_layer.lf_cost(self.y),
                                        givens=self.givens, on_unused_input='ignore')
@@ -287,18 +269,12 @@ class DeepML(object):
         self.fn_w = theano.function(inputs=[self.t, self.D], outputs=self.metric_layer.get_w(),
                                     givens=self.givens, on_unused_input='ignore')
 
-        # self.fn_tstd = theano.function(inputs=[self.t, self.D], outputs=self.metric_layer.tstud(),
-        #                                givens=self.givens, on_unused_input='ignore')
-
         self.fn_kl = theano.function(inputs=[self.t, self.D, self.rho], outputs=self.metric_layer.kl_div(self.rho),
                                      givens=self.givens, on_unused_input='ignore')
 
         self.fn_w_val = theano.function(inputs=[self.t, self.D] + self.bn_mu_list + self.bn_std_list,
                                         outputs=self.metric_layer.get_w(),
                                         givens={self.vflag: numpy.int8(1)}, on_unused_input='ignore')
-
-        # self.fn_act_list = [theano.function(inputs=[self.t, self.D], outputs=hidden_layer.get_act_stats(),
-        #                                     givens=self.givens, on_unused_input='ignore') for hidden_layer in self.hidden_layers_list]
 
 
     # Regularization variables
@@ -311,7 +287,7 @@ class DeepML(object):
             self.L2_sqr += (hidden_layer.W ** 2).sum()
 
 
-    # Alternate constructor from filename
+    # Alternate constructor from filename (to be used by patch-based label fusion)
 
     @classmethod
     def fromfile(cls, numpy_rng, file_path):
@@ -361,9 +337,6 @@ class DeepML(object):
     def get_w(self, Tp, Ap): return self.fn_w(numpy.asarray(Tp, dtype=theano.config.floatX),
                                               numpy.asarray(Ap, dtype=theano.config.floatX))
 
-    # def get_tstud(self, Tp, Ap): return self.fn_tstd(numpy.asarray(Tp, dtype=theano.config.floatX),
-    #                                                  numpy.asarray(Ap, dtype=theano.config.floatX))
-
     def get_kl(self, Tp, Ap, rho):
 
         rho_aux = numpy.asarray(rho, dtype=theano.config.floatX)
@@ -385,31 +358,6 @@ class DeepML(object):
                           numpy.asarray(Ap, dtype=theano.config.floatX))
 
         return w
-
-    # def get_act_list(self, Tp, Ap):
-    #
-    #     act_mu_list, act_std_list = [], []
-    #
-    #     for fn_tr_act in self.fn_act_list:
-    #         act_mu, act_std = fn_tr_act(numpy.float32(Tp), numpy.float32(Ap))
-    #         act_mu_list.append(act_mu)
-    #         act_std_list.append(act_std)
-    #
-    #     return (act_mu_list, act_std_list)
-
-
-    # Get list of batchnorm params gamma, beta (for each layer)
-
-    # def get_bn_params_list(self):
-    #
-    #     g_list, b_list = [], []
-    #
-    #     for hidden_layer in self.hidden_layers_list:
-    #         if hidden_layer.bn_flag:
-    #             g_list.append(hidden_layer.gamma.get_value().mean())
-    #             b_list.append(hidden_layer.b.get_value().mean())
-    #
-    #     return (g_list, b_list)
 
     # Get list of batchnorm stats (for each layer)
 
@@ -434,13 +382,12 @@ class DeepML(object):
                numpy.asarray(L2_reg, dtype=theano.config.floatX) * self.L2_sqr
 
         # gparams = [T.grad(cost, param) for param in self.params]
-        # self.updates = [(param, param - learning_rate * gparam) for param, gparam in zip(self.params, gparams)]
+        # self.updates = [(param, param - learning_rate * gparam) for param, gparam in zip(self.params, gparams)]  # vanilla SGD
 
-        self.updates = adam.Adam(cost=cost, params=self.params, lr=learning_rate)
+        self.updates = adam.Adam(cost=cost, params=self.params, lr=learning_rate)  # adam-based SGD
 
         train_model = theano.function(inputs=[self.t, self.D, self.y, self.rho], outputs=cost, updates=self.updates,
                                       givens=self.givens, on_unused_input='ignore')
-
 
         return train_model
 
@@ -508,7 +455,7 @@ class DeepML(object):
 
 
 #
-# Id network (for multi-thread computations)
+# Id network (for efficient computations)
 #
 
 
