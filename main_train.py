@@ -3,17 +3,11 @@ import timeit
 from time import sleep
 import argparse
 import numpy
-# import PatchSamplerAtlas
 import PatchSampler as ps
 from scipy.optimize import minimize
 from DeepMetricLearning import DeepML, IdNet, normalize_patches
 from deeplf_display import write_stats4
 import os
-from label_fusion import label_fusion, get_label_fusion_params
-from subprocess import call, check_output
-from sys import platform, exit
-from shutil import rmtree
-import csv
 from warnings import warn
 
 scale_vars = []  # [l2n, y]: global variables for scale estimation
@@ -24,14 +18,6 @@ def softmax(w):
 
     e = numpy.exp(w)
     return e / numpy.sum(e, axis=1, keepdims=True)
-
-def xentropy(beta):
-
-    y = scale_vars[1]
-    smax = softmax(-beta * scale_vars[0])
-    true_dist = y / numpy.sum(y, axis=1, keepdims=True)
-    entr = numpy.sum(true_dist * numpy.log(smax), axis=1)
-    return -numpy.mean(entr)
 
 def labfus(beta):
 
@@ -49,21 +35,13 @@ def labfus_acc(beta, l2n, y):
     return numpy.mean(lf > 0.5)
 
 
-parser = argparse.ArgumentParser(description='Trains deep model for manifold learning')
+parser = argparse.ArgumentParser(description='Learns deep embeddings for patch-based label fusion')
 
 # dataset arguments
 parser.add_argument("--train_dir", type=str, nargs=1, required=True, help="directory of training images")
 parser.add_argument("--val_dir", type=str, nargs=1, required=True, help="directory of validation images")
 parser.add_argument("--img_suffix", type=str, nargs=1, required=True, help="suffix of images")
 parser.add_argument("--lab_suffix", type=str, nargs=1, required=True, help="suffix of labelmaps")
-
-# segment arguments
-parser.add_argument("--num_threads_deeplf", type=int, nargs=1, default=[4], help='number of threads for deep labfus (default 4)')
-parser.add_argument("--no_competing_labfus", action='store_true', help="do not perform nlwv nlbeta labfus")
-parser.add_argument("--parallel_labfus", action='store_true', help="each label segmented individually (otherwise grouped as per label_group)")
-parser.add_argument("--reg_dir", type=str, nargs=1, required=True, help='directory with registrations from train to train/validation images')
-parser.add_argument("--reg_img_suffix", type=str, nargs=1, required=True, help='suffix of registered images')
-parser.add_argument("--reg_lab_suffix", type=str, nargs=1, required=True, help='suffix of registered labelmaps')
 
 # sampler argument
 parser.add_argument("--fract_inside", type=float, nargs=1, default=[.5], help="(optional) fraction of inside patches to sample (default .5)")
@@ -72,7 +50,10 @@ parser.add_argument("--num_neighbors", type=int, nargs=1, default=[50], help="(o
 # store arguments
 parser.add_argument("--model_name", type=str, nargs=1, required=True, help="name of the model (used to name output files)")
 parser.add_argument("--store_folder", type=str, nargs=1, required=True, help="folder to store model to")
-parser.add_argument("--label_group", type=int, nargs='+', action='append', required=True, help="group of labels defining a model")
+parser.add_argument("--label_group", type=int, nargs='+', action='append', required=True, help="Group of labels defining a model."
+                                                                                               "A separate model will be learnt from each group of labels."
+                                                                                               "Typically a group of labels is defined as a pair of labels for"
+                                                                                               "the left and right parts of a structure")
 
 # training arguments
 parser.add_argument("--num_epochs", type=float, nargs=1, required=True, help="number of epochs")
@@ -99,61 +80,38 @@ parser.add_argument("--load_net", type=str, nargs=1, help="(optional) file with 
 # method arguments
 parser.add_argument("--patch_rad", type=int, nargs=1, default=[2], help="(optional) image patch radius (default 2)")
 parser.add_argument("--patch_norm", type=str, nargs=1, default=['zscore'], help="(optional) patch normalization type [zscore|l2|none]")
-parser.add_argument("--search_rad", type=int, nargs=1, default=[3], help="(optional) search neighborhood radius (default 3)")
+parser.add_argument("--search_rad", type=int, nargs=1, default=[3], help="(optional) neighborhood radius for sampling voting patches (default 3)")
 
 args = parser.parse_args()
+# EXAMPLE:
 # args = parser.parse_args(''
 #                          '--train_dir /Users/gsanroma/DATA/deeplf/data/sata_mini_train '
-#                          # '--train_dir /Users/gsanroma/DATA/deeplf/data/mini_train7 '
 #                          '--val_dir /Users/gsanroma/DATA/deeplf/data/sata_mini_val '
-#                          # '--val_dir /Users/gsanroma/DATA/deeplf/data/mini_val7 '
-#                          '--img_suffix _brain.nii.gz --lab_suffix _glm.nii.gz '
-#                          # '--img_suffix _brain.nii.gz --lab_suffix _labels.nii.gz '
-#                          #
-#                          '--reg_dir /Users/gsanroma/DATA/deeplf/sata20/registrations '
-#                          # '--reg_dir /Users/gsanroma/DATA/deeplf/adni35/registrations '
-#                          '--reg_img_suffix _brainWarped.nii.gz '
-#                          '--reg_lab_suffix _glmWarped.nii.gz '
-#                          # '--reg_lab_suffix _labelsWarped.nii.gz '
-#                          # '--parallel_labfus '
+#                          '--img_suffix _brain.nii.gz '
+#                          '--lab_suffix _glm.nii.gz '
 #                          #
 #                          '--fract_inside 0.5 '
 #                          '--model_name kk '
 #                          '--store_folder /Users/gsanroma/DATA/deeplf/models_sata '
-#                          # '--store_folder /Users/gsanroma/DATA/deeplf/models_adni '
-#                          # '--label_group 1 2 '
-#                          '--label_group 31 --label_group 32 --label_group 36 --label_group 37 '
-#                          # '--label_group 23 30 '
+#                          '--label_group 31 32 '
+#                          '--label_group 36 37 '
 #                          '--num_epochs 30 '
 #                          '--train_batch_size 50 '
 #                          '--est_batch_size 500 '
 #                          '--display_frequency 1 '
-#                          '--segment_frequency 1 '
 #                          '--learning_rate 0.0002 '
 #                          '--L2_reg 0. '
 #                          '--sparse_reg 2e-3 '
 #                          #
-#                          # '--sim exp '
 #                          '--num_units 100 '
 #                          '--num_hidden_layers 1 '
 #                          '--activation relu '
 #                          '--batch_norm '
 #                          #
-#                          # '--load_net /Users/gsanroma/DATA/deeplf/models/model000.model '
-#                          #
 #                          '--num_neighbors 50 '
-#                          '--patch_rad 2 '
+#                          '--patch_rad 3 '
 #                          '--search_rad 3 '
 #                          '--patch_norm zscore '.split())
-
-if platform == 'darwin':
-    is_hpc = False
-else:
-    is_hpc = True
-
-python_path = os.path.join(os.environ['HOME'], 'anaconda', 'envs', 'sitkpy', 'bin', 'python')
-code_path = os.path.join(os.environ['HOME'], 'CODE')
-evalseg_path = os.path.join(code_path, 'scripts_py', 'evaluate_segmentations.py')
 
 numpy_rng = numpy.random.RandomState(1234)
 
@@ -165,10 +123,6 @@ kl_rho.shape = (1, 1)
 # correct batch_norm if no hidden layers
 batch_norm_flag = args.batch_norm if args.num_hidden_layers[0] > 0 else False
 
-# label fusion parameters
-aux = get_label_fusion_params(args.val_dir[0], args.img_suffix[0], args.reg_dir[0], args.reg_img_suffix[0], args.reg_lab_suffix[0])
-val_name_list, val_path_list, train_img_path_superlist, train_lab_path_superlist = aux
-
 print('... building idnet')
 
 id_net = IdNet()
@@ -178,11 +132,6 @@ id_net = IdNet()
 
 img_reader = ps.ImageReader(args.train_dir[0], args.val_dir[0], args.img_suffix[0], args.lab_suffix[0],
                             args.label_group, args.patch_rad[0], args.search_rad[0])
-
-# patch_sampler = PatchSamplerAtlas.PatchSamplerAtlas(numpy_rng, args.train_dir[0], args.val_dir[0], args.img_suffix[0], args.lab_suffix[0],
-#                                                     args.reg_dir[0], args.reg_img_suffix[0], args.reg_lab_suffix[0],
-#                                                     args.label_group, args.patch_rad[0], args.search_rad[0], args.cert_threshold[0])
-# labels_superlist = patch_sampler.labels_superlist
 
 labels_superlist = args.label_group
 N_models = len(labels_superlist)
@@ -216,8 +165,7 @@ beta0_list = []
 
 for i, (sampler, embedder) in enumerate(zip(sampler_list, embedder_list)):
 
-    # Tp_est, Tv_est, Ap_est, Av_est = patch_sampler.sample(i, args.est_batch_size[0], args.num_neighbors[0], xvalset='train', update_epoch=False)
-    Tp_est, Tv_est, Ap_est, Av_est = sampler.sample(args.est_batch_size[0], numpy.inf, args.fract_inside[0], xvalset='train', update_epoch=False)
+    Tp_est, Tv_est, Ap_est, Av_est = sampler.sample(args.est_batch_size[0], numpy.inf, args.fract_inside[0], xvalset='train', update_epoch=False)  # get all neighbors for estimation
 
     Tp_est = normalize_patches(args.patch_norm[0], Tp_est)
     Ap_est = normalize_patches(args.patch_norm[0], Ap_est)
@@ -233,7 +181,6 @@ for i, (sampler, embedder) in enumerate(zip(sampler_list, embedder_list)):
     # scale for the original method
     l2n = id_net.get_l2n(Tp_est, Ap_est)
     scale_vars = (l2n, Y_est)
-    # if args.cost[0] == 'xent': beta0_list.append(minimize(xentropy, 0.001, method='Nelder-Mead', tol=1e-6).x)
     beta0_list.append(minimize(labfus, 0.001, method='Nelder-Mead', tol=1e-6).x)
 
     embedder.beta0 = beta0_list[-1]  # add beta0 to model
@@ -241,7 +188,6 @@ for i, (sampler, embedder) in enumerate(zip(sampler_list, embedder_list)):
     # scale for the last layer of the network
     l2n = embedder.get_l2n(Tp_est, Ap_est)
     scale_vars = (l2n, Y_est)
-    # if args.cost[0] == 'xent': beta_ini_nn = minimize(xentropy, 0.001, method='Nelder-Mead', tol=1e-6).x
     beta_ini_nn = minimize(labfus, 0.001, method='Nelder-Mead', tol=1e-6).x
     embedder.rescale_metric_layer_weights(beta_ini_nn)
 
@@ -267,9 +213,6 @@ for group_dir in group_dir_list:
     model_dir_list.append(os.path.join(group_dir, args.model_name[0]))
     if not os.path.exists(model_dir_list[-1]): os.makedirs(model_dir_list[-1])
 
-wait_jobs = [os.path.join(os.environ['ANTSSCRIPTS'], "waitForSGEQJobs.pl"), '0', '30']
-check_jobs = [os.path.join(code_path, 'deeplf', 'checkForSGEQJobs.pl'), '1']
-
 #
 # PIPELINE
 #
@@ -277,12 +220,6 @@ check_jobs = [os.path.join(code_path, 'deeplf', 'checkForSGEQJobs.pl'), '1']
 print('... training')
 
 start_time = timeit.default_timer()
-
-iter_num = 0
-first_iter = True
-if args.no_competing_labfus:
-    first_iter = False
-
 
 epoch_superlist = [[0.0] for _ in range(N_models)]
 hours_list = [0.0]
@@ -294,6 +231,7 @@ class_stats = [[] for _ in range(N_models)]
 sparsity = [[] for _ in range(N_models)]
 invalid_updates = [0 for _ in range(N_models)]
 # results
+# these are variables to store segmentation results on validation images
 segment_epoch_list = [0.0 for _ in range(N_models)]
 dice_nl = [0.0 for _ in range(N_models)]
 dice_nlb = [0.0 for _ in range(N_models)]
@@ -308,7 +246,7 @@ acc_nl = [0.0 for _ in range(N_models)]
 acc_nlb = [0.0 for _ in range(N_models)]
 acc_dlf = [0.0 for _ in range(N_models)]
 
-segment_jobs = []
+iter_num = 0
 no_final = True
 
 while no_final:
@@ -318,25 +256,15 @@ while no_final:
     #
 
     time_aux = timeit.default_timer()
-    # train_time, sample_time = 0., 0.
 
     for i, (sampler, embedder, train_model) in enumerate(zip(sampler_list, embedder_list, train_model_list)):
-
-        # print('sampler %d' % i)
 
         while True:
 
             # Sample training data
 
-            # time_aux2 = timeit.default_timer()
-
             Tp_tr, Tv_tr, Ap_tr, Av_tr = sampler.sample(args.train_batch_size[0], args.num_neighbors[0], args.fract_inside[0],
                                                         xvalset='train', update_epoch=True)
-            # Tp_tr, Tv_tr, Ap_tr, Av_tr = patch_sampler.sample(i, args.train_batch_size[0], args.num_neighbors[0], xvalset='train', update_epoch=True)
-
-            # sample_time = timeit.default_timer() - time_aux2
-            #
-            # print('Sample time: %0.3f' % sample_time)
 
             Tp_tr = normalize_patches(args.patch_norm[0], Tp_tr)
             Ap_tr = normalize_patches(args.patch_norm[0], Ap_tr)
@@ -346,13 +274,7 @@ while no_final:
 
             # train model
 
-            # time_aux2 = timeit.default_timer()
-
             cost = train_model(numpy.float32(Tp_tr), numpy.float32(Ap_tr), numpy.float32(Y_tr), kl_rho)
-
-            # train_time = timeit.default_timer() - time_aux2
-            #
-            # print('Train time: %0.3f' % train_time)
 
             if numpy.isfinite(cost): break
 
@@ -360,7 +282,7 @@ while no_final:
 
             embedder.restore_multilayer_params()
 
-            sleep(5)
+            sleep(5)  # in case of bad update
 
             invalid_updates[i] += 1
 
@@ -383,7 +305,6 @@ while no_final:
         for i, (sampler, embedder, model_dir) in enumerate(zip(sampler_list, embedder_list, model_dir_list)):
 
             if sampler.epoch > args.num_epochs[0]: continue
-            # if patch_sampler.epoch[i] > args.num_epochs[0]: continue
 
             # Store latest model
 
@@ -393,20 +314,17 @@ while no_final:
 
                 Tp_est, Tv_est, Ap_est, Av_est = sampler.sample(args.est_batch_size[0], numpy.inf, args.fract_inside[0],
                                                                 xvalset='train', update_epoch=False)
-                # Tp_est, Tv_est, Ap_est, Av_est = patch_sampler.sample(i, args.est_batch_size[0], numpy.inf, xvalset='train', update_epoch=False)
 
                 Tp_est = normalize_patches(args.patch_norm[0], Tp_est)
                 Ap_est = normalize_patches(args.patch_norm[0], Ap_est)
 
             model_name = os.path.join(model_dir, 'grp%d_latest.dat' % i)
             embedder.write_multilayer(model_name, Tp_est, Ap_est, sampler.epoch)
-            # embedder.write_multilayer(model_name, Tp_est, Ap_est, patch_sampler.epoch[i])
 
             # Performance on train set
 
             Tp_tr, Tv_tr, Ap_tr, Av_tr = sampler.sample(args.train_batch_size[0], args.num_neighbors[0], args.fract_inside[0],
                                                         xvalset='train', update_epoch=False)
-            # Tp_tr, Tv_tr, Ap_tr, Av_tr = patch_sampler.sample(i, args.train_batch_size[0], args.num_neighbors[0], xvalset='train', update_epoch=False)
 
             Tp_tr = normalize_patches(args.patch_norm[0], Tp_tr)
             Ap_tr = normalize_patches(args.patch_norm[0], Ap_tr)
@@ -417,7 +335,6 @@ while no_final:
             # Performance on validation set
 
             Tp_val, Tv_val, Ap_val, Av_val = sampler.sample(args.est_batch_size[0], numpy.inf, args.fract_inside[0], xvalset='val')
-            # Tp_val, Tv_val, Ap_val, Av_val = patch_sampler.sample(i, args.est_batch_size[0], numpy.inf, xvalset='val')
 
             Tp_val = normalize_patches(args.patch_norm[0], Tp_val)
             Ap_val = normalize_patches(args.patch_norm[0], Ap_val)
@@ -450,7 +367,6 @@ while no_final:
                 warn('Failed to write statistics after display')
 
             epoch_superlist[i].append(sampler.epoch)
-            # epoch_superlist[i].append(patch_sampler.epoch[i])
 
         hours_list.append((timeit.default_timer() - start_time) / 3600.)
 
@@ -470,258 +386,35 @@ while no_final:
     # Segment statistics
     #
 
-    if iter_num % args.segment_frequency[0] == 0:# and is_hpc:
+    # if iter_num % args.segment_frequency[0] == 0:  # launch segmentation jobs once each args.segment_frequency[0] iterations
 
-        if check_output(check_jobs + segment_jobs).find('Still waiting') == -1:
+    # Here segmentation jobs should be launched to segment the validation images in val_dir and results should be evaluated when segmentation jobs finished
 
-            print('Not waiting for any segmentation job')
+    # First of all, results should be evaluated if previous segmentation jobs already finished
+    # Dice scores for each model should be kept in lists: dice_dlf (deeplf), dice_nl (nlwv), dice_nlb (nlbeta)
+    # Alternatively, sensitivities and specificities can be kept in lists: sens_dfl, spec_dlf, ...
 
-    # segment_jobs = 3
-    # aux_segment = 3
+    # Next, if previous segmentation jobs finished then save the current models (with epoch identifier) and launch new jobs.
+    # Keeping the current networks with epoch identifier can be done with something along the lines:
 
-            if segment_jobs:
+    # model_files_list = []
+    # for i, (sampler, embedder, model_dir) in enumerate(zip(sampler_list, embedder_list, model_dir_list)):
+    #     Tp_est, Ap_est = None, None
+    #     if batch_norm_flag:  # if bn layers then sample estimation batch (for saving bn statistics)
+    #         Tp_est, Tv_est, Ap_est, Av_est = sampler.sample(args.est_batch_size[0], numpy.inf, args.fract_inside[0],
+    #                                                         xvalset='train', update_epoch=False)
+    #         Tp_est = normalize_patches(args.patch_norm[0], Tp_est)
+    #         Ap_est = normalize_patches(args.patch_norm[0], Ap_est)
+    #
+    #     model_files_list.append(os.path.join(model_dir, ('grp%d_epch' % i) + ('%0.3f' % sampler.epoch).replace('.', '_') + '.dat'))
+    #     embedder.write_multilayer(model_files_list[-1], Tp_est, Ap_est, sampler.epoch)
+    #     # keep segmentation epochs
+    #     segment_epoch_list[i] = sampler.epoch
 
-                print('Previous segmentation jobs finished')
 
-                segment_time = timeit.default_timer() - aux_segment
-                print('Segment time: %0.3f' % segment_time)
-                print('Going to evaluate')
+    # Segmentation jobs should be launched using script pblf_py to segment the validation images using the saved models
+    # Segmentation jobs should be ideally asyncronous so that training does not need to stop while segmenting validation images
 
-                # Evaluate segmentations
-
-                if args.parallel_labfus:
-                    # pairs of id group, id model
-                    grp_idx_list = []
-                    lab_ini = 0
-                    for id_model, labels_list in enumerate(labels_superlist):
-                        len_list = len(labels_list)
-                        grp_idx_list += list(zip(range(lab_ini, lab_ini + len_list), [id_model]*len_list))
-                        lab_ini += len_list
-                else:
-                    grp_idx_list = [(i, i) for i in range(N_models)]
-
-                seg_err_list = [False for _ in range(N_models)]
-                n_lab_list = [0.0 for _ in range(N_models)]  # number of labels per model
-
-                for grp, i in grp_idx_list:
-
-                    dice_dlf[i] = 0.0  # initialize dice accumulator
-
-                    if seg_err_list[i]: continue  # if got segmentation errors in some label of the same model then skip
-
-                    n_lab_list[i] += 1.0  # increase number of labels of current model
-
-                    suffix_list = ['_dlf_grp%d.nii.gz' % grp]
-                    if first_iter:
-                        suffix_list.append('_nl_grp%d.nii.gz' % grp)
-                        suffix_list.append('_nlb_grp%d.nii.gz' % grp)
-
-                    try:
-                        for suffix in suffix_list:
-                            cmdline = [python_path, '-u', evalseg_path]
-                            cmdline.extend(['--est_dir'] + [labfus_dir])
-                            cmdline.extend(['--est_suffix'] + [suffix])
-                            cmdline.extend(['--gtr_dir'] + args.val_dir)
-                            cmdline.extend(['--gtr_suffix'] + args.lab_suffix)
-
-                            call(cmdline)
-
-                            with open(os.path.join(labfus_dir, 'label_dice.csv'), 'rb') as f:
-                                reader = csv.reader(f)
-                                label_dices_str = list(reader)[1]
-                                label_dices = numpy.asarray([float(f) for f in label_dices_str])
-                                if suffix == '_nl_grp%d.nii.gz' % grp: dice_nl[i] += label_dices.mean()
-                                if suffix == '_nlb_grp%d.nii.gz' % grp: dice_nlb[i] += label_dices.mean()
-                                if suffix == '_dlf_grp%d.nii.gz' % grp: dice_dlf[i] += label_dices.mean()
-                                os.remove(os.path.join(labfus_dir, 'label_dice.csv'))
-
-                    except:
-                        seg_err_list[i] = True  # indicate segmentation errors in i-th model
-                        warn('There were some segmentation errors')
-                        continue
-
-                    # SENSITIVITY, SPECIFICITY, ACCURACY
-
-                    sens_dlf[i] = 0.0  # initialize sens accumulator
-                    spec_dlf[i] = 0.0  # initialize spec accumulator
-                    acc_dlf[i] = 0.0  # initialize acc accumulator
-
-                    suffix2_list = ['_dlf_grp%d.txt' % grp]
-                    if first_iter:
-                        suffix2_list.append('_nl_grp%d.txt' % grp)
-                        suffix2_list.append('_nlb_grp%d.txt' % grp)
-                    try:
-                        for suffix in suffix2_list:
-                            files_list = os.listdir(labfus_dir)
-                            est_files = [f for f in files_list if f.endswith(suffix)]
-                            assert est_files, "No estimated segmentation found"
-                            sens, spec, acc = 0., 0., 0.
-                            for est_file in est_files:
-                                with open(os.path.join(labfus_dir, est_file), 'r') as f:
-                                    for line in f:
-                                        values = line.split(',')
-                                        sens += float(values[0])
-                                        spec += float(values[1])
-                                        acc += float(values[2])
-                                        break
-                            if suffix == '_nl_grp%d.txt' % grp:
-                                sens_nl[i] += sens / float(len(est_files))
-                                spec_nl[i] += spec / float(len(est_files))
-                                acc_nl[i] += acc / float(len(est_files))
-                            if suffix == '_nlb_grp%d.txt' % grp:
-                                sens_nlb[i] += sens / float(len(est_files))
-                                spec_nlb[i] += spec / float(len(est_files))
-                                acc_nlb[i] += acc / float(len(est_files))
-                            if suffix == '_dlf_grp%d.txt' % grp:
-                                sens_dlf[i] += sens / float(len(est_files))
-                                spec_dlf[i] += spec / float(len(est_files))
-                                acc_dlf[i] += acc / float(len(est_files))
-                    except:
-                        seg_err_list[i] = True  # indicate segmentation errors in i-th model
-                        warn('There were some segmentation errors')
-                        continue
-
-                for i in range(N_models):
-
-                    if seg_err_list[i]: continue
-
-                    # average dices across labels
-                    dice_dlf[i] /= n_lab_list[i]
-                    if first_iter:
-                        dice_nl[i] /= n_lab_list[i]
-                        dice_nlb[i] /= n_lab_list[i]
-
-                    sens_dlf[i] /= n_lab_list[i]
-                    spec_dlf[i] /= n_lab_list[i]
-                    acc_dlf[i] /= n_lab_list[i]
-                    if first_iter:
-                        sens_nl[i] /= n_lab_list[i]
-                        spec_nl[i] /= n_lab_list[i]
-                        acc_nl[i] /= n_lab_list[i]
-                        sens_nlb[i] /= n_lab_list[i]
-                        spec_nlb[i] /= n_lab_list[i]
-                        acc_nlb[i] /= n_lab_list[i]
-
-                    seg_stats[i].append((dice_nl[i], dice_nlb[i], dice_dlf[i], segment_epoch_list[i]))
-                    class_stats[i].append((sens_nl[i], spec_nl[i], acc_nl[i],
-                                           sens_nlb[i], spec_nlb[i], acc_nlb[i],
-                                           sens_dlf[i], spec_dlf[i], acc_dlf[i], segment_epoch_list[i]))
-
-                    print("Dices group %d (epoch %0.3f): nlwv %0.4f, nlbeta %0.4f, deeplf %0.4f" %
-                          (i, segment_epoch_list[i], dice_nl[i], dice_nlb[i], dice_dlf[i]))
-                    print("Acc group %d (epoch %0.3f): nlwv %0.4f, nlbeta %0.4f, deeplf %0.4f" %
-                          (i, segment_epoch_list[i], acc_nl[i], acc_nlb[i], acc_dlf[i]))
-
-                    try:
-                        # write statistics
-                        write_stats4(stats_fig_list[i], args, epoch_superlist[i], hours_list, cost_tr_full[i][::args.display_frequency[0]],
-                                     cost_noreg[i], acc_labfus[i], sparsity[i], seg_stats[i], class_stats[i], invalid_updates[i],
-                                     (labels_superlist[i], beta0_list[i]))
-                    except:
-                        warn('Failed to write statistics after segmentation')
-
-                print("Avg. dices: nlwv %0.4f, nlbeta %0.4f, deeplf %0.4f" %
-                      (numpy.asarray(dice_nl).mean(), numpy.asarray(dice_nlb).mean(), numpy.asarray(dice_dlf).mean()))
-
-                print("Avg. acc: nlwv %0.4f, nlbeta %0.4f, deeplf %0.4f" %
-                      (numpy.asarray(acc_nl).mean(), numpy.asarray(acc_nlb).mean(), numpy.asarray(acc_dlf).mean()))
-
-                if os.path.exists(labfus_dir): rmtree(labfus_dir)
-
-                first_iter = False
-
-            #
-            # Segment
-
-            aux_segment = timeit.default_timer()
-
-            # Store models
-
-            model_files_list = []
-
-            for i, (sampler, embedder, model_dir) in enumerate(zip(sampler_list, embedder_list, model_dir_list)):
-
-                Tp_est, Ap_est = None, None
-
-                if batch_norm_flag:  # if bn layers then sample estimation batch (for saving bn statistics)
-
-                    Tp_est, Tv_est, Ap_est, Av_est = sampler.sample(args.est_batch_size[0], numpy.inf, args.fract_inside[0],
-                                                                    xvalset='train', update_epoch=False)
-                    # Tp_est, Tv_est, Ap_est, Av_est = patch_sampler.sample(i, args.est_batch_size[0], numpy.inf, xvalset='train', update_epoch=False)
-
-                    Tp_est = normalize_patches(args.patch_norm[0], Tp_est)
-                    Ap_est = normalize_patches(args.patch_norm[0], Ap_est)
-
-                model_files_list.append(os.path.join(model_dir, ('grp%d_epch' % i) + ('%0.3f' % sampler.epoch).replace('.', '_') + '.dat'))
-                embedder.write_multilayer(model_files_list[-1], Tp_est, Ap_est, sampler.epoch)
-                # model_files_list.append(os.path.join(model_dir, ('grp%d_epch' % i) + ('%0.3f' % patch_sampler.epoch[i]).replace('.', '_') + '.dat'))
-                # embedder.write_multilayer(model_files_list[-1], Tp_est, Ap_est, patch_sampler.epoch[i])
-
-                # keep segmentation epochs
-                segment_epoch_list[i] = sampler.epoch
-
-            if not os.path.exists(labfus_dir): os.makedirs(labfus_dir)
-
-            # Segment
-
-            print('Going to launch segmentation jobs')
-
-            try:
-
-                segment_jobs = []
-                for i, (val_name, val_path, train_img_path_list, train_lab_path_list) in \
-                        enumerate(zip(val_name_list, val_path_list, train_img_path_superlist, train_lab_path_superlist)):
-
-                    # entangle list of labels with their corresponding params (for parallel label fusion)
-                    aux = [([label], model_file) for labels_list, model_file in zip(labels_superlist, model_files_list) for label in labels_list]
-                    label_params_list = zip(*aux) if args.parallel_labfus else [labels_superlist, model_files_list]
-
-                    methods_list, label_params_superlist, suffix_list = ['deeplf'], [label_params_list], ['_dlf.nii.gz']
-
-                    if first_iter:
-                        # nlbeta
-                        methods_list.append('nlbeta')
-                        # entangle list of labels with their corresponding params (for parallel label fusion)
-                        aux = [([label], beta0) for labels_list, beta0 in zip(labels_superlist, beta0_list) for label in labels_list]
-                        label_params_list = zip(*aux) if args.parallel_labfus else [labels_superlist, beta0_list]
-                        label_params_superlist.append(label_params_list)
-                        suffix_list.append('_nlb.nii.gz')
-                        # nlwv
-                        methods_list.append('nlwv')
-                        # entangle list of labels with their corresponding params (for parallel label fusion)
-                        aux = [([label], 0.0) for labels_list in labels_superlist for label in labels_list]
-                        label_params_list = zip(*aux) if args.parallel_labfus else [labels_superlist, [0.0]*N_models]
-                        label_params_superlist.append(label_params_list)
-                        suffix_list.append('_nl.nii.gz')
-
-                    for method, label_params_list, suffix in zip(methods_list, label_params_superlist, suffix_list):
-
-                        out_file = os.path.join(labfus_dir, val_name + suffix)
-
-                        # REMEMBER TO SET SEARCH_RAD TO '1' IF USING SINGLE IMAGE FOR LEARNING
-
-                        patch_rad = '%dx%dx%d' % (args.patch_rad[0], args.patch_rad[0], args.patch_rad[0])
-                        # search_rad = '%dx%dx%d' % (args.search_rad[0], args.search_rad[0], args.search_rad[0])
-                        search_rad = '1x1x1'
-                        fusion_rad = '1x1x1'
-                        struct_sim = 0.9
-                        patch_norm = args.patch_norm[0]
-
-                        # if actual threads is given, then num_threads becomes a list [num_threads, actual_num_threads]
-                        num_threads = None
-                        if method == 'deeplf':
-                            num_threads = args.num_threads_deeplf[0]
-
-                        _, job_id_list = label_fusion(val_path, train_img_path_list, train_lab_path_list, out_file, False, method, patch_rad, search_rad,
-                                                      fusion_rad, struct_sim, patch_norm, label_params_list[1], label_params_list[0], num_threads,
-                                                      val_path.split(args.img_suffix[0])[0] + args.lab_suffix[0])
-
-                        if is_hpc: segment_jobs.extend(job_id_list)
-
-            except:
-                warn("Failed to launch segmentation jobs")
-
-            print('Launched seg jobs: %s' % (' '.join(segment_jobs)))
 
     iter_num += 1
 
