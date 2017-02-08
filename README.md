@@ -6,7 +6,7 @@ Author: Gerard Sanroma (`gsanroma@gmail.com`)
 
 ![GitHub Logo](/images/pipeline.png)
 
-## OS Requirements
+## Software Requirements
 anaconda (with python 2.7)
 
 ### Python requirements
@@ -107,10 +107,10 @@ The input parameters are the following:
 - `--struct_sim`: structural similarity threshold (default 0.9)
 - `--normalization`: patch normalization type \[L2 | zscore | none\] (default zscore)
 - `--method`: nlwv, nlbeta, deeplf, lasso
-  - nlwv: non-local weighted voting method as in *Coupe et al. Patch-based Segmentation using Expert Priors: Application to Hippocampus and Ventricle Segmentation. NeuroImage, 54(2): 940–954, 2011*.
-  - nlbeta: same as nlwv but using fixed scale parameter (beta), ideally empirically estimated as proposed in the companion paper of the method (DeepLF).
-  - deeplf: proposed DeepLF method
-  - lasso: another variant of similarity weighted voting that computes the weights using sparse linear regression as in *Zhang et al. Sparse patch-based label fusion for multi-atlas segmentation. MBIA 2012*.
+  - **nlwv**: non-local weighted voting method as in *Coupe et al. Patch-based Segmentation using Expert Priors: Application to Hippocampus and Ventricle Segmentation. NeuroImage, 54(2): 940–954, 2011*.
+  - **nlbeta**: same as **nlwv** but using fixed scale parameter (beta), ideally empirically estimated as proposed in the companion paper of the method (DeepLF).
+  - **deeplf**: proposed DeepLF method
+  - **lasso**: another variant of similarity weighted voting that computes the weights using sparse linear regression as in *Zhang et al. Sparse patch-based label fusion for multi-atlas segmentation. MBIA 2012*.
 - `--regularization`: (nlwv, lasso, nlbeta) regularization parameter for label fusion method (default 0.001)
 - `--load_net`: (deeplf) file with the deep neural network
 - `--label_grp`: (optional) list of label ids to segment
