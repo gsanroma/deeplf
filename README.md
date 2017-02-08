@@ -15,7 +15,7 @@ SimpleITK 0.9.0
 Theano 0.8.2
 
 ## Method
-This method learns transformations of image patches to be used for multi-atlas patch-based label fusion (*Coupe et al. Patch-based Segmentation using Expert Priors: Application to Hippocampus and Ventricle Segmentation. NeuroImage, 54(2): 940–954, 2011*).
+This method learns transformations of image patches to be used for multi-atlas patch-based label fusion.
 
 It uses a deep neural network to compute non-linear embeddings.
 
