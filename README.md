@@ -2,6 +2,10 @@
 
 The paper will be referenced here when published
 
+Author: Gerard Sanroma (`gsanroma@gmail.com`)
+
+![GitHub Logo](/images/pipeline.png)
+
 ## OS Requirements
 anaconda (with python 2.7)
 
@@ -63,7 +67,8 @@ There are the following parameters:
 
 ## Remarks
 
-The method validates periodically the performance by checking the accuracy on batches of patches extracted from the validation images. Although this measure is orientative for the progress of training, it is highly encouraged that validation is performed through actual multi-atlas segmentation experiments on the validation images using some patch-based label fusion method.
+The method validates periodically the performance by checking the accuracy on batches of patches extracted from the validation images. 
+Although this measure is orientative for the progress of training, **it is highly encouraged that validation is performed through actual multi-atlas segmentation experiments on the validation images using some patch-based label fusion method**.
 
 The script `pblf_py.py` does provide an implementation of patch-based label fusion that allows to use a trained neural network to compute patch embeddings.
 
