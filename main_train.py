@@ -318,7 +318,8 @@ while no_final:
                 Tp_est = normalize_patches(args.patch_norm[0], Tp_est)
                 Ap_est = normalize_patches(args.patch_norm[0], Ap_est)
 
-            model_name = os.path.join(model_dir, 'grp%d_latest.dat' % i)
+            model_name = os.path.join(model_dir, ('grp%d_epch' % i) + ('%0.3f' % sampler.epoch).replace('.', '_') + '.dat')
+            # model_name = os.path.join(model_dir, 'grp%d_latest.dat' % i)
             embedder.write_multilayer(model_name, Tp_est, Ap_est, sampler.epoch)
 
             # Performance on train set
@@ -394,6 +395,9 @@ while no_final:
     # Dice scores for each model should be kept in lists: dice_dlf (deeplf), dice_nl (nlwv), dice_nlb (nlbeta)
     # Alternatively, sensitivities and specificities can be kept in lists: sens_dfl, spec_dlf, ...
 
+    # It is suggested to display the dices of the models together with their corresponding epochs so that it is easy to identify
+    # the file corresponding to the best peforming model after training
+
     # Next, if previous segmentation jobs finished then save the current models (with epoch identifier) and launch new jobs.
     # Keeping the current networks with epoch identifier can be done with something along the lines:
 
@@ -408,7 +412,9 @@ while no_final:
     #
     #     model_files_list.append(os.path.join(model_dir, ('grp%d_epch' % i) + ('%0.3f' % sampler.epoch).replace('.', '_') + '.dat'))
     #     embedder.write_multilayer(model_files_list[-1], Tp_est, Ap_est, sampler.epoch)
-    #     # keep segmentation epochs
+    #
+    #     # Keep track of the epoch corresponding to the saved model so that when evaluating the results of such model we can know
+    #     # what epoch it corresponds to and can easily locate the file of the best model
     #     segment_epoch_list[i] = sampler.epoch
 
 

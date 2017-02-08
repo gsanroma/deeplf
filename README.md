@@ -34,7 +34,7 @@ There are the following parameters:
 - `--num_neighbors`: number of neighboring voting patches (default 50)
 
 ### storing arguments
-- `--model_name`: id of the model (used to name output files)
+- `--model_name`: id of the model (used to name the output files, which is useful in case of launching several training instances in paralle. More details below)
 - `--store_folder`: folder to store model to
 - `--label_group`: Group of labels defining a model. A separate model will be learnt from each group of labels. Typically a group of labels is defined as a pair of labels for the left and right parts of a structure
 
@@ -57,8 +57,7 @@ There are the following parameters:
 - `--num_hidden_layers`: number of hidden layers
 - `--activation`: [relu|tanh|sigmoid|none] activation of hidden layers (default relu)
 - `--batch_norm`: batch normalization
-#### net params from file
-- --`load_net`: load net params from file
+- --`load_net`: alternatively, you can also load an existing net from file
 
 ### method arguments
 - `--patch_rad`: image patch radius (default 2)
@@ -76,6 +75,41 @@ More details on how to perform such evaluation can be found in the comments of `
 
 Various measures showing the progress of training will be periodically plotted into a file (once each `--display_frequency` iterations), including training/validation cost, accuracy and segmentation dices (this latter one in case it is implemented by the user as explained in the code).
 
+**It is also highly encouraged to launch several training scripts in parallel using different values for the hyper parameters.**
+The structure of the directories will keep everything organized.
+To that end, we should specify all the training instances with the same `--store_folder` and with a different `--model_name`.
+
 ## Structure of directories
 
+The method will create the following directory structure under the directory specified in the parameter `store_folder`:
+
+- `Group#`, where `#` is the group number corresponding to the group of labels specified in the parameter `label_group`
+- `Labfus`: this directory can be used for evaluating label fusion results on validation images (*Not implemented. To be done by the user*).
+
+- `Group#/grp#_modelname.png`: figure with plots with various measures of training progress (computed once each `--display_frequency` iterations) for model `modelname` and group `#` of labels.
+Here, `modelname` is specified through parameter `--model_name`.
+- `Group#/modelname/`: directory containing the models stored each `--display_frequency` iterations with format `grp#_epch#.dat`, where `epch#` indicates the epoch number corresponding to the model.
+
 ## Multi-atlas patch-based label fusion script `pblf_py.py`
+
+This script features various brands of weighted voting label fusion methods.
+
+The input parameters are the following:
+
+- `--target_img`: to be segmented target image
+- `--atlas_img_list`: list of (registered) atlas images
+- `--atlas_lab_list`: list of (registered) atlas labelmaps
+- `--out_file`: name of output file with fusion result
+- `--probabilities`: store segmentation probabilities (experimental)
+- `--patch_radius`: image patch radius (default 3x3x3)
+- `--search_radius`: search neighborhood radius (default 1x1x1)
+- `--fusion_radius`: radius of label patch for fusion (default 1x1x1)
+- `--struct_sim`: structural similarity threshold (default 0.9)
+- `--normalization`: patch normalization type \[L2 | zscore | none\] (default zscore)
+- `--method`: nlwv, nlbeta, deeplf, lasso
+- `--regularization`: (nlwv, lasso, nlbeta) regularization parameter for label fusion method (default 0.001)
+- `--load_net`: (deeplf) file with the deep neural network
+- `--label_grp`: (optional) list of label ids to segment
+- `--consensus_thr`: (optional) consensus threshold for creating segmentation mask (default 0.9)
+- `--classification_metrics`: (optional) compute classification metrics in non-consensus region (needs target labelmap)
+
