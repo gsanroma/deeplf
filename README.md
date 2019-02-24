@@ -1,6 +1,6 @@
-# DeepLF: Learning deep embeddings for patch-based label fusion
+# Learning Non-Linear Patch Embeddings with Neural Networks for Label Fusion
 
-The paper will be referenced here when published
+This repository contains the code for the brain MRI segmentation method described in [this](https://doi.org/10.1016/j.media.2017.11.013) paper.
 
 Author: Gerard Sanroma (`gsanroma@gmail.com`)
 
