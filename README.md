@@ -6,11 +6,11 @@ Author: Gerard Sanroma (`gsanroma@gmail.com`)
 
 ![GitHub Logo](/images/pipeline.png)
 
-## Software Requirements
-anaconda (with python 2.7)
-
 ## License
 License for this software package: BSD 3-Clause License. A copy of this license is present in the root directory
+
+## Software Requirements
+anaconda (with python 2.7)
 
 ### Python requirements
 SimpleITK 0.9.0
